@@ -1,103 +1,141 @@
-#!/usr/bin/env python3
-"""Scrape eBay search results into JSON or CSV."""
-
 import argparse
 import csv
 import json
-import re
-import sys
 import time
-from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 BASE_URL = "https://www.ebay.com/sch/i.html"
-NUM_PAGES = 10
-REQUEST_DELAY = 1.0
-REQUEST_TIMEOUT = 10
 
 
-def fetch_page_html(search_term, page_num, pages_dir=None, session=None):
-    """Return the raw HTML for one page of search results.
-
-    When pages_dir is given, the page is read from disk (page-N.html)
-    instead of being requested over the network.
-    """
+def fetch_page_html(search_term, page_num, pages_dir):
     if pages_dir:
-        path = Path(pages_dir) / f"page-{page_num}.html"
-        return path.read_text(encoding="utf-8")
+        file_name = pages_dir + "/page-" + str(page_num) + ".html"
+        file = open(file_name, "r", encoding="utf-8")
+        html = file.read()
+        file.close()
+        return html
 
     headers = {"User-Agent": USER_AGENT}
     params = {"_nkw": search_term, "_pgn": page_num}
-    response = session.get(BASE_URL, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
+    response = requests.get(BASE_URL, params=params, headers=headers, timeout=10)
     return response.text
 
 
 def parse_price(text):
-    """Extract a price in integer cents from text like '$54.99' or '$54.99 to $65.99'."""
-    if not text:
+    if text == None or text == "":
         return None
-    matches = re.findall(r"[\d,]+\.\d{2}", text)
-    if not matches:
+
+    text = text.strip()
+    if " to " in text:
+        text = text.split(" to ")[0]
+
+    text = text.replace("$", "")
+    text = text.replace(",", "")
+    text = text.strip()
+
+    if text == "":
         return None
-    value = matches[0].replace(",", "")
-    return round(float(value) * 100)
+
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+
+    return int(round(value * 100))
 
 
 def parse_shipping(text):
-    """Extract shipping cost in integer cents. 0 for free shipping, None if unknown."""
-    if not text:
+    if text == None or text == "":
         return None
+
+    text = text.strip()
     if "free" in text.lower():
         return 0
-    match = re.search(r"[\d,]+\.\d{2}", text)
-    if not match:
+
+    text = text.replace("+", "")
+    text = text.replace("$", "")
+    text = text.replace(",", "")
+
+    words = text.split()
+    if len(words) == 0:
         return None
-    value = match.group(0).replace(",", "")
-    return round(float(value) * 100)
+
+    try:
+        value = float(words[0])
+    except ValueError:
+        return None
+
+    return int(round(value * 100))
 
 
 def parse_items_sold(text):
-    """Extract an integer item-sold count from text like '123 sold'."""
-    if not text:
+    if text == None or text == "":
         return None
-    match = re.search(r"[\d,]+", text)
-    if not match:
+
+    text = text.strip()
+    text = text.replace(",", "")
+    words = text.split()
+
+    if len(words) == 0:
         return None
-    return int(match.group(0).replace(",", ""))
+
+    if words[0].isdigit():
+        return int(words[0])
+
+    return None
 
 
 def parse_listing(item):
-    """Parse one listing (<li class="s-item">) into a dict, or None if it isn't a real listing."""
     title_tag = item.select_one(".s-item__title")
-    if title_tag is None:
+    if title_tag == None:
         return None
+
     name = title_tag.get_text(strip=True)
-    if not name or name.lower() in ("shop on ebay", "new listing"):
+    if name == "" or name.lower() == "shop on ebay":
         return None
 
     price_tag = item.select_one(".s-item__price")
-    price = parse_price(price_tag.get_text(strip=True) if price_tag else None)
+    if price_tag == None:
+        price = None
+    else:
+        price = parse_price(price_tag.get_text(strip=True))
 
-    status_tag = item.select_one(".SECONDARY_INFO") or item.select_one(".s-item__subtitle")
-    status = status_tag.get_text(strip=True) if status_tag else None
-    status = status or None
+    status_tag = item.select_one(".SECONDARY_INFO")
+    if status_tag == None:
+        status_tag = item.select_one(".s-item__subtitle")
 
-    shipping_tag = item.select_one(".s-item__shipping") or item.select_one(".s-item__logisticsCost")
-    shipping = parse_shipping(shipping_tag.get_text(strip=True) if shipping_tag else None)
+    if status_tag == None:
+        status = None
+    else:
+        status = status_tag.get_text(strip=True)
+        if status == "":
+            status = None
 
-    free_returns = item.select_one(".s-item__free-returns") is not None
+    shipping_tag = item.select_one(".s-item__shipping")
+    if shipping_tag == None:
+        shipping_tag = item.select_one(".s-item__logisticsCost")
+
+    if shipping_tag == None:
+        shipping = None
+    else:
+        shipping = parse_shipping(shipping_tag.get_text(strip=True))
+
+    free_returns_tag = item.select_one(".s-item__free-returns")
+    if free_returns_tag == None:
+        free_returns = False
+    else:
+        free_returns = True
 
     sold_tag = item.select_one(".s-item__quantitySold")
-    items_sold = parse_items_sold(sold_tag.get_text(strip=True) if sold_tag else None)
+    if sold_tag == None:
+        items_sold = None
+    else:
+        items_sold = parse_items_sold(sold_tag.get_text(strip=True))
 
-    return {
+    listing = {
         "name": name,
         "price": price,
         "status": status,
@@ -105,47 +143,65 @@ def parse_listing(item):
         "free_returns": free_returns,
         "items_sold": items_sold,
     }
+    return listing
 
 
 def parse_page(html):
-    """Parse a search-results page into a list of listing dicts."""
     soup = BeautifulSoup(html, "html.parser")
+    items = soup.select("li.s-item")
+
     listings = []
-    for item in soup.select("li.s-item"):
+    for item in items:
         listing = parse_listing(item)
-        if listing is not None:
+        if listing != None:
             listings.append(listing)
+
     return listings
 
 
-def scrape(search_term, pages_dir=None):
-    """Scrape (or read) pages 1-10 and return the combined list of listings."""
-    results = []
-    session = None if pages_dir else requests.Session()
+def scrape(search_term, pages_dir):
+    all_listings = []
 
-    for page_num in range(1, NUM_PAGES + 1):
-        html = fetch_page_html(search_term, page_num, pages_dir=pages_dir, session=session)
-        results.extend(parse_page(html))
-        if not pages_dir and page_num < NUM_PAGES:
-            time.sleep(REQUEST_DELAY)
+    for page_num in range(1, 11):
+        html = fetch_page_html(search_term, page_num, pages_dir)
+        page_listings = parse_page(html)
 
-    return results
+        for listing in page_listings:
+            all_listings.append(listing)
+
+        if pages_dir == None and page_num < 10:
+            time.sleep(1)
+
+    return all_listings
 
 
 def save_json(listings, search_term):
-    out_path = Path(f"{search_term}.json")
-    out_path.write_text(json.dumps(listings, indent=2), encoding="utf-8")
-    return out_path
+    file_name = search_term + ".json"
+    file = open(file_name, "w", encoding="utf-8")
+    json.dump(listings, file, indent=2)
+    file.close()
+    return file_name
 
 
 def save_csv(listings, search_term):
-    out_path = Path(f"{search_term}.csv")
-    fieldnames = ["name", "price", "status", "shipping", "free_returns", "items_sold"]
-    with out_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(listings)
-    return out_path
+    file_name = search_term + ".csv"
+    file = open(file_name, "w", newline="", encoding="utf-8")
+    writer = csv.writer(file)
+    writer.writerow(["name", "price", "status", "shipping", "free_returns", "items_sold"])
+
+    for listing in listings:
+        row = [
+            listing["name"],
+            listing["price"],
+            listing["status"],
+            listing["shipping"],
+            listing["free_returns"],
+            listing["items_sold"],
+        ]
+        writer.writerow(row)
+
+    file.close()
+    return file_name
 
 
 def main():
@@ -155,14 +211,14 @@ def main():
     parser.add_argument("--csv", action="store_true", help="Save results as CSV instead of JSON")
     args = parser.parse_args()
 
-    listings = scrape(args.search, pages_dir=args.pages_dir)
+    listings = scrape(args.search, args.pages_dir)
 
     if args.csv:
-        out_path = save_csv(listings, args.search)
+        file_name = save_csv(listings, args.search)
     else:
-        out_path = save_json(listings, args.search)
+        file_name = save_json(listings, args.search)
 
-    print(f"Saved {len(listings)} listings to {out_path}")
+    print("Saved " + str(len(listings)) + " listings to " + file_name)
 
 
 if __name__ == "__main__":
