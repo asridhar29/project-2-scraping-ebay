@@ -111,6 +111,21 @@ def find_items_sold_text(item):
     return None
 
 
+def parse_free_returns(item):
+    free_returns_tag = item.select_one(".s-item__free-returns")
+    if free_returns_tag != None:
+        return True
+
+    # no specific badge found: only call it False if the listing says
+    # something about returns at all (e.g. "returns not accepted"); if
+    # there is no returns information whatsoever, it is missing -> None
+    full_text = clean_text(item).lower()
+    if "return" in full_text:
+        return False
+
+    return None
+
+
 def parse_listing(item):
     title_tag = item.select_one(".s-item__title")
     if title_tag == None:
@@ -146,11 +161,7 @@ def parse_listing(item):
     else:
         shipping = parse_shipping(clean_text(shipping_tag))
 
-    free_returns_tag = item.select_one(".s-item__free-returns")
-    if free_returns_tag == None:
-        free_returns = False
-    else:
-        free_returns = True
+    free_returns = parse_free_returns(item)
 
     items_sold = parse_items_sold(find_items_sold_text(item))
 
