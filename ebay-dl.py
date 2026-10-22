@@ -75,15 +75,38 @@ def parse_items_sold(text):
     if text == None or text == "":
         return None
 
-    text = text.strip()
     text = text.replace(",", "")
     words = text.split()
 
-    if len(words) == 0:
-        return None
+    for word in words:
+        if word.isdigit():
+            return int(word)
 
-    if words[0].isdigit():
-        return int(words[0])
+    return None
+
+
+def clean_text(tag):
+    # separator=" " keeps a space between text from separate child tags,
+    # so e.g. "<span>11</span><span>sold</span>" doesn't become "11sold"
+    text = tag.get_text(separator=" ", strip=True)
+    return " ".join(text.split())
+
+
+def find_items_sold_text(item):
+    sold_tag = item.select_one(".s-item__quantitySold")
+    if sold_tag != None:
+        text = clean_text(sold_tag)
+        if "sold" in text.lower():
+            return text
+
+    # fallback: look anywhere in the listing for a number followed by "sold"
+    full_text = clean_text(item)
+    words = full_text.split()
+    for i in range(len(words)):
+        if words[i].lower() == "sold" and i > 0:
+            number = words[i - 1].replace(",", "")
+            if number.isdigit():
+                return number + " sold"
 
     return None
 
@@ -93,7 +116,7 @@ def parse_listing(item):
     if title_tag == None:
         return None
 
-    name = title_tag.get_text(strip=True)
+    name = clean_text(title_tag)
     if name == "" or name.lower() == "shop on ebay":
         return None
 
@@ -101,7 +124,7 @@ def parse_listing(item):
     if price_tag == None:
         price = None
     else:
-        price = parse_price(price_tag.get_text(strip=True))
+        price = parse_price(clean_text(price_tag))
 
     status_tag = item.select_one(".SECONDARY_INFO")
     if status_tag == None:
@@ -110,7 +133,7 @@ def parse_listing(item):
     if status_tag == None:
         status = None
     else:
-        status = status_tag.get_text(strip=True)
+        status = clean_text(status_tag)
         if status == "":
             status = None
 
@@ -121,7 +144,7 @@ def parse_listing(item):
     if shipping_tag == None:
         shipping = None
     else:
-        shipping = parse_shipping(shipping_tag.get_text(strip=True))
+        shipping = parse_shipping(clean_text(shipping_tag))
 
     free_returns_tag = item.select_one(".s-item__free-returns")
     if free_returns_tag == None:
@@ -129,11 +152,7 @@ def parse_listing(item):
     else:
         free_returns = True
 
-    sold_tag = item.select_one(".s-item__quantitySold")
-    if sold_tag == None:
-        items_sold = None
-    else:
-        items_sold = parse_items_sold(sold_tag.get_text(strip=True))
+    items_sold = parse_items_sold(find_items_sold_text(item))
 
     listing = {
         "name": name,
