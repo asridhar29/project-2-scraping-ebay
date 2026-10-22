@@ -112,15 +112,23 @@ def find_items_sold_text(item):
 
 
 def parse_free_returns(item):
+    # a returns badge can exist but say something other than "free"
+    # (e.g. "Returns accepted"), so check its text, not just presence
     free_returns_tag = item.select_one(".s-item__free-returns")
     if free_returns_tag != None:
-        return True
+        tag_text = clean_text(free_returns_tag).lower()
+        if tag_text != "":
+            if "free" in tag_text:
+                return True
+            return False
 
     # no specific badge found: only call it False if the listing says
     # something about returns at all (e.g. "returns not accepted"); if
     # there is no returns information whatsoever, it is missing -> None
     full_text = clean_text(item).lower()
     if "return" in full_text:
+        if "free return" in full_text:
+            return True
         return False
 
     return None
